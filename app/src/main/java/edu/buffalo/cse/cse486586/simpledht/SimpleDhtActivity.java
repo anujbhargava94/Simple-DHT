@@ -1,7 +1,9 @@
 package edu.buffalo.cse.cse486586.simpledht;
 
+import android.content.Context;
 import android.os.Bundle;
 import android.app.Activity;
+import android.telephony.TelephonyManager;
 import android.text.method.ScrollingMovementMethod;
 import android.view.Menu;
 import android.widget.TextView;
