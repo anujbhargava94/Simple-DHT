@@ -16,3 +16,5 @@ app/build/intermediates/*
 app/build/outputs/apk/debug/
 app/build/outputs/**
 app/build/outputs/logs/*
+app/build/generated/*
+app/build/outputs/logs/*

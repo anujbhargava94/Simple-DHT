@@ -9,13 +9,31 @@ public class MessageDht implements Serializable {
 
 
     private Enum<MessageDhtType> msgType;
-    private ContentValues contentValues;
+    private Map<String, String> contentValues;
+    private String fromPort;
     private String selfPort;
     private String prePort;
     private String succPort;
     private String toPort;
-    private Map<String, ?> queryContent;
+    private Map<String, String> queryContent;
     private String queryKey;
+    private String queryResponse;
+
+    public String getQueryResponse() {
+        return queryResponse;
+    }
+
+    public void setQueryResponse(String queryResponse) {
+        this.queryResponse = queryResponse;
+    }
+
+    public String getFromPort() {
+        return fromPort;
+    }
+
+    public void setFromPort(String fromPort) {
+        this.fromPort = fromPort;
+    }
 
     public String getQueryKey() {
         return queryKey;
@@ -25,11 +43,11 @@ public class MessageDht implements Serializable {
         this.queryKey = queryKey;
     }
 
-    public Map<String, ?> getQueryContent() {
+    public Map<String, String> getQueryContent() {
         return queryContent;
     }
 
-    public void setQueryContent(Map<String, ?> queryContent) {
+    public void setQueryContent(Map<String, String> queryContent) {
         this.queryContent = queryContent;
     }
 
@@ -49,11 +67,11 @@ public class MessageDht implements Serializable {
         this.toPort = toPort;
     }
 
-    public ContentValues getContentValues() {
+    public Map<String, String> getContentValues() {
         return contentValues;
     }
 
-    public void setContentValues(ContentValues contentValues) {
+    public void setContentValues(Map<String, String> contentValues) {
         this.contentValues = contentValues;
     }
 

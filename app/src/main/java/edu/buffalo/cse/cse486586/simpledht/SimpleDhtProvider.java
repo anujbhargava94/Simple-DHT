@@ -22,6 +22,7 @@ import java.net.Socket;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Formatter;
+import java.util.HashMap;
 import java.util.Map;
 
 public class SimpleDhtProvider extends ContentProvider {
@@ -37,8 +38,9 @@ public class SimpleDhtProvider extends ContentProvider {
     private static final String VALUE_FIELD = "value";
     private final Uri mUri = buildUri("content", "edu.buffalo.cse.cse486586.simpledht.provider");
     private static boolean queryFlag = false;
-    Map<String, ?> messageGlobal;
+    Map<String, String> messageGlobal;
     String singleMessageGlobal;
+    private static String PREFNAME = "PREF";
 
 
     private Uri buildUri(String scheme, String authority) {
@@ -51,6 +53,10 @@ public class SimpleDhtProvider extends ContentProvider {
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
         // TODO Auto-generated method stub
+        SharedPreferences sharedPref = getContext().getSharedPreferences(PREFNAME, Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = sharedPref.edit();
+        editor.remove(selection);
+        editor.apply();
         return 0;
     }
 
@@ -73,24 +79,27 @@ public class SimpleDhtProvider extends ContentProvider {
         try {
             String keyHash = genHash(key);
             String selfPortHash = genHashForPort(myPort);
-            String succPortHash = genHashForPort(succPort);
-
-            if (keyHash.compareTo(selfPortHash) > 0
-                    && keyHash.compareTo(succPortHash) > 0
-                    && succPortHash.compareTo(selfPortHash) > 0) {
-                sendInsertRequestToSucc(values, succPort);
-            } else {
-                SharedPreferences sharedPref = getContext().getSharedPreferences(key, Context.MODE_PRIVATE);
+            String prePortHash = genHashForPort(prePort);
+            Log.v("inserting", values.toString());
+            if ((keyHash.compareTo(prePortHash) > 0 && keyHash.compareTo(selfPortHash) < 0 )
+                    || (keyHash.compareTo(prePortHash) > 0 && keyHash.compareTo(selfPortHash) > 0 && selfPortHash.compareTo(prePortHash) < 0) //12
+                    || (keyHash.compareTo(prePortHash) < 0 && keyHash.compareTo(selfPortHash) < 0 && selfPortHash.compareTo(prePortHash) < 0) //1
+                    || (selfPortHash.equals(prePortHash))) {
+                SharedPreferences sharedPref = getContext().getSharedPreferences(PREFNAME, Context.MODE_PRIVATE);
                 SharedPreferences.Editor editor = sharedPref.edit();
                 editor.putString(key, value);
                 editor.commit();
+                Log.v("inserted", values.toString());
+            } else {
+                Log.v("insert delegate", values.toString());
+                sendInsertRequestToSucc(values, succPort);
             }
 
 
         } catch (Exception e) {
             e.printStackTrace();
         }
-        Log.v("insert", values.toString());
+        //Log.v("insert", values.toString());
         return null;
     }
 
@@ -100,6 +109,8 @@ public class SimpleDhtProvider extends ContentProvider {
         TelephonyManager tel = (TelephonyManager) getContext().getSystemService(Context.TELEPHONY_SERVICE);
         String portStr = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
         myPort = String.valueOf((Integer.parseInt(portStr) * 2));
+        succPort = myPort;
+        prePort = myPort;
         serverSocketInit();
         sendJoinRequest("11108", myPort);
         return false;
@@ -111,20 +122,20 @@ public class SimpleDhtProvider extends ContentProvider {
 
         MatrixCursor cursor = null;
         String[] columnNames = new String[]{KEY_FIELD, VALUE_FIELD};
-        SharedPreferences sharedPref = getContext().getSharedPreferences(selection, Context.MODE_PRIVATE);
+        SharedPreferences sharedPref = getContext().getSharedPreferences(PREFNAME, Context.MODE_PRIVATE);
 
         if (selection.equals("@")) {
-            messageGlobal = sharedPref.getAll();
+            messageGlobal = (Map<String, String>) sharedPref.getAll();
             //Log.d("query debug", selection + ":" + message);
         } else if (selection.equals("*")) {
-            messageGlobal = sharedPref.getAll();
+            messageGlobal = (Map<String, String>) sharedPref.getAll();
             MessageDht messageDht = new MessageDht();
             messageDht.setSelfPort(myPort);
             messageDht.setToPort(succPort);
             messageDht.setQueryContent(messageGlobal);
             messageDht.setMsgType(MessageDhtType.QUERYGLOBAL);
             sendGlobalMessageQuery(messageDht);
-            queryFlag = false;
+            queryFlag = true;
             while (queryFlag) {
 
             }
@@ -132,7 +143,7 @@ public class SimpleDhtProvider extends ContentProvider {
         } else {
 
             String message = sharedPref.getString(selection, "0");
-            if (message != null) {
+            if (message != null && !message.equals("0")) {
                 Log.d("query debug", selection + ":" + message);
 
                 String[] columnValues = new String[]{selection, message};
@@ -152,9 +163,10 @@ public class SimpleDhtProvider extends ContentProvider {
                 MessageDht msg = new MessageDht();
                 msg.setQueryKey(selection);
                 msg.setToPort(succPort);
+                msg.setSelfPort(myPort);
                 msg.setMsgType(MessageDhtType.QUERYSINGLE);
                 sendSingleMessageQuery(msg);
-                queryFlag = false;
+                queryFlag = true;
                 while (queryFlag) {
                 }
             }
@@ -179,7 +191,7 @@ public class SimpleDhtProvider extends ContentProvider {
             if (getContext() == null) return cursor;
             for (String key : messageGlobal.keySet()) {
                 columnValues[0] = key;
-                columnValues[1] = (String) messageGlobal.get(key);
+                columnValues[1] = messageGlobal.get(key);
                 cursor.addRow(columnValues);
             }
             try {
@@ -229,41 +241,86 @@ public class SimpleDhtProvider extends ContentProvider {
                     try {
                         msgReceived = readMessage(socket.getInputStream());
                         if (msgReceived.getMsgType() == MessageDhtType.JOINREQUEST) {
+                            Log.d(SERVER_TAG, "inside join request");
                             String selfPortHash = genHashForPort(myPort);
                             String reqPortHash = genHashForPort(msgReceived.getSelfPort());
                             String succPortHash = genHashForPort(succPort);
-                            if ((reqPortHash.compareTo(selfPortHash) > 0 && reqPortHash.compareTo(succPortHash) < 0)
-                                    || (reqPortHash.compareTo(selfPortHash) > 0 && reqPortHash.compareTo(succPortHash) > 0 && selfPortHash.compareTo(succPortHash) > 0)
-                                    || (reqPortHash.compareTo(selfPortHash) < 0 && reqPortHash.compareTo(succPortHash) < 0 && selfPortHash.compareTo(succPortHash) > 0)) {
-                                String succ = succPort;
-                                succPort = msgReceived.getSelfPort();
-                                sendJoinResponse(msgReceived.getSelfPort(), myPort, succ);
-                                sendJoinPreUpdate(succPort, msgReceived.getSelfPort());
-
-                            } else if (selfPortHash.equals(succPortHash)) {
+                            if (selfPortHash.equals(succPortHash)) {
+                                Log.d(SERVER_TAG, "inside join request cond 2");
                                 succPort = msgReceived.getSelfPort();
                                 prePort = msgReceived.getSelfPort();
+                                Log.d(SERVER_TAG, "join request self two" + prePort + "-->" + myPort + "-->" + succPort);
                                 sendJoinResponse(msgReceived.getSelfPort(), myPort, myPort);
+                            } else if ((reqPortHash.compareTo(selfPortHash) > 0 && reqPortHash.compareTo(succPortHash) < 0)
+                                    || (reqPortHash.compareTo(selfPortHash) > 0 && reqPortHash.compareTo(succPortHash) > 0 && selfPortHash.compareTo(succPortHash) > 0)
+                                    || (reqPortHash.compareTo(selfPortHash) < 0 && reqPortHash.compareTo(succPortHash) < 0 && selfPortHash.compareTo(succPortHash) > 0)) {
+                                Log.d(SERVER_TAG, "inside join request cond 1");
+                                String succ = succPort;
+                                succPort = msgReceived.getSelfPort();
+                                Log.d(SERVER_TAG, "join request" + prePort + "-->" + myPort + "-->" + succPort);
+                                sendJoinResponse(msgReceived.getSelfPort(), myPort, succ);
+                                sendJoinPreUpdate(succ, msgReceived.getSelfPort());
+
                             } else {
+                                Log.d(SERVER_TAG, "inside join request cond 3");
+                                Log.d(SERVER_TAG, "join request to delegate  succ" + prePort + "-->" + myPort + "-->" + succPort);
                                 sendJoinRequest(succPort, msgReceived.getSelfPort());
                             }
                         } else if (msgReceived.getMsgType() == MessageDhtType.JOINRESPONSE) {
+                            Log.d(SERVER_TAG, "inside join response cond 1");
                             prePort = msgReceived.getPrePort();
                             succPort = msgReceived.getSuccPort();
+                            Log.d(SERVER_TAG, "join response" + prePort + "-->" + myPort + "-->" + succPort);
                         } else if (msgReceived.getMsgType() == MessageDhtType.JOINUPDATE) {
+                            Log.d(SERVER_TAG, "inside join update cond 1");
                             prePort = msgReceived.getPrePort();
+                            Log.d(SERVER_TAG, "join update" + prePort + "-->" + myPort + "-->" + succPort);
                         } else if (msgReceived.getMsgType() == MessageDhtType.INSERT) {
+                            Log.d(SERVER_TAG, "inside insert cond 1");
                             try {
-                                ContentValues values = msgReceived.getContentValues();
-                                insert(mUri, values);
+                                Map<String, String> map = msgReceived.getContentValues();
+                                Map.Entry<String,String> entry = map.entrySet().iterator().next();
+                                String key = entry.getKey();
+                                String value = entry.getValue();
+                                ContentValues contentValues = new ContentValues();
+                                contentValues.put(KEY_FIELD, key);
+                                contentValues.put(VALUE_FIELD, value);
+                                insert(mUri, contentValues);
                             } catch (Exception e) {
                                 e.printStackTrace();
                             }
-                        }else if(msgReceived.getMsgType() == MessageDhtType.QUERYGLOBAL){
-                            
-
-                        }else if(msgReceived.getMsgType() == MessageDhtType.QUERYSINGLE){
-
+                        } else if (msgReceived.getMsgType() == MessageDhtType.QUERYGLOBAL) {
+                            Log.d(SERVER_TAG, "inside query global");
+                            if (msgReceived.getSelfPort().equals(myPort)) {
+                                queryFlag = false;
+                                messageGlobal = msgReceived.getQueryContent();
+                            } else {
+                                SharedPreferences sharedPref = getContext().getSharedPreferences(PREFNAME, Context.MODE_PRIVATE);
+                                Map<String, String> messageLocal = (Map<String, String>) sharedPref.getAll();
+                                Map<String, String> messageGlobal = msgReceived.getQueryContent();
+                                if (messageGlobal != null) {
+                                    messageGlobal.putAll(messageLocal);
+                                }
+                                msgReceived.setQueryContent(messageGlobal);
+                                msgReceived.setToPort(succPort);
+                                sendGlobalMessageQuery(msgReceived);
+                            }
+                        } else if (msgReceived.getMsgType() == MessageDhtType.QUERYSINGLE) {
+                            SharedPreferences sharedPref = getContext().getSharedPreferences(PREFNAME, Context.MODE_PRIVATE);
+                            String message = sharedPref.getString(msgReceived.getQueryKey(), "0");
+                            Log.d(SERVER_TAG,"found on "+myPort+" "+message);
+                            if (message == null || message.equals("0")) {
+                                msgReceived.setToPort(succPort);
+                                sendSingleMessageQuery(msgReceived);
+                            } else {
+                                msgReceived.setToPort(msgReceived.getSelfPort());
+                                msgReceived.setQueryResponse(message);
+                                msgReceived.setMsgType(MessageDhtType.QUERYSINGLERESPONSE);
+                                sendSingleMessageQueryResponse(msgReceived);
+                            }
+                        } else if (msgReceived.getMsgType() == MessageDhtType.QUERYSINGLERESPONSE) {
+                            singleMessageGlobal = msgReceived.getQueryResponse();
+                            queryFlag = false;
                         }
                     } catch (Exception e) {
                         Log.d(SERVER_TAG, "socket timeout for server while reading");
@@ -275,29 +332,38 @@ public class SimpleDhtProvider extends ContentProvider {
         }
     }
 
+    private void sendSingleMessageQueryResponse(MessageDht msgReceived) {
+        //clientSocket(msgReceived);
+        new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msgReceived);
+
+    }
+
     private void sendGlobalMessageQuery(MessageDht msg) {
-       // new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg);
-        clientSocket(msg);
+         new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg);
+        //clientSocket(msg);
 
     }
 
     private void sendSingleMessageQuery(MessageDht msg) {
-        //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg);
-        clientSocket(msg);
+        new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg);
+        //clientSocket(msg);
 
     }
 
+    //TODO in background
     private void sendJoinRequest(String toPort, String fromPort) {
-        if (myPort.equals("11108")) {
-            succPort = myPort;
-            prePort = myPort;
+        if (fromPort.equals("11108")) {
+            succPort = fromPort;
+            prePort = fromPort;
+            Log.d(CLIENT_TAG, "self join" + prePort + "-->" + myPort + "-->" + succPort);
         } else {
             MessageDht msg = new MessageDht();
             msg.setMsgType(MessageDhtType.JOINREQUEST);
             msg.setToPort(toPort);
             msg.setSelfPort(fromPort);
-            //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg);
-            clientSocket(msg);
+            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg);
+            //Log.d(CLIENT_TAG,"join request"+toPort+"-->"+myPort+"-->"+fromPort);
+
         }
 
     }
@@ -325,19 +391,24 @@ public class SimpleDhtProvider extends ContentProvider {
         MessageDht msg = new MessageDht();
         msg.setMsgType(MessageDhtType.INSERT);
         msg.setToPort(succPort);
-        //new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg);
-        clientSocket(msg);
+        Map<String, String> map = new HashMap<String, String>();
+        String key = values.getAsString(KEY_FIELD);
+        String value = values.getAsString(VALUE_FIELD);
+        map.put(key,value);
+        msg.setContentValues(map);
+        new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg);
+        //clientSocket(msg);
     }
 
 
-    private void clientSocket(MessageDht msg){
+    private void clientSocket(MessageDht msg) {
         try {
-        Socket socket;
-        //if (msgs[0].getMsgType() == MessageDhtType.JOINRESPONSE) {
-        socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-                Integer.parseInt(msg.getToPort()));
-        sendMessage(socket.getOutputStream(), msg);
-        }catch(Exception e){
+            Socket socket;
+            //if (msgs[0].getMsgType() == MessageDhtType.JOINRESPONSE) {
+            socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                    Integer.parseInt(msg.getToPort()));
+            sendMessage(socket.getOutputStream(), msg);
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
@@ -348,23 +419,9 @@ public class SimpleDhtProvider extends ContentProvider {
         protected Void doInBackground(MessageDht... msgs) {
             try {
                 Socket socket;
-                //if (msgs[0].getMsgType() == MessageDhtType.JOINRESPONSE) {
                 socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                         Integer.parseInt(msgs[0].getToPort()));
                 sendMessage(socket.getOutputStream(), msgs[0]);
-//                } else if (msgs[0].getMsgType() == MessageDhtType.JOINREQUEST) {
-//                    socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-//                            Integer.parseInt(msgs[0].getToPort()));
-//                    sendMessage(socket.getOutputStream(), msgs[0].concat(":" + msgs[2]));
-//                } else if (msgs[0].getMsgType() == MessageDhtType.JOINUPDATE) {
-//                    socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-//                            Integer.parseInt(msgs[0].getToPort()));
-//                    sendMessage(socket.getOutputStream(), msgs[0].concat(":" + msgs[2]));
-//                } else if (msgs[0].getMsgType() == MessageDhtType.INSERT) {
-//                    socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-//                            Integer.parseInt(msgs[0].getToPort()));
-//                    sendMessage(socket.getOutputStream(), msgs[0].concat(":" + msgs[2]));
-//                }
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -395,6 +452,4 @@ public class SimpleDhtProvider extends ContentProvider {
         MessageDht msgFromServer = (MessageDht) dIn.readObject();
         return msgFromServer;
     }
-
-
 }
